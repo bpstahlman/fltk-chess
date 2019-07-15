@@ -115,6 +115,10 @@ struct Piece {
 		return Delta{abs(destination.row - position.row), abs(destination.col - position.col)};
 	}
 	Path path_to(Coordinate destination) {
+		// BPS: sgn() function (not in C++ std library) would simplify this.
+		// BPS: Question: Is there an advantage to instantiating paths in this way?
+		// BPS: Question: Would it be simpler to have each piece type override this? I notice that each call
+		//      site has validation before the call to path_to.
 		int row_inc = ((destination.row - position.row) == 0 ? 0 : ((destination.row - position.row) / abs(destination.row - position.row)));
 		int col_inc = ((destination.col - position.col) == 0 ? 0 : ((destination.col - position.col) / abs(destination.col - position.col)));
 		Path path;
@@ -141,6 +145,9 @@ struct Pawn : public Piece {
 			if (destination.on_board() && ((d_t.row == 1 && d_t.col == 0)
 						        || (d_t.row == 1 && abs(d_t.col) == 1) 
 						        || (d_t.row == 2 && d_t.col == 0 && (not has_moved)))) {
+				// BPS: In the d_t.row == 2 case, path will not include the position directly in front
+				// of the pawn. Won't this pose a problem in path_valid, which checks only positions in
+				// path for occupancy?
 				return Path{destination};
 			} else {
 				return Path{};
@@ -269,6 +276,10 @@ struct Board {
 	Path search_path(Path_type path_type, Coordinate search_from, Team mover_team, bool finding_threat, bool need_path);
 	Path is_threatened(Team threatening, Coordinate threatened_coord, bool need_path) {
 		Path p;
+		// BPS: Look for paths between threatening's pieces and the threatened_coord. Search is for one piece
+		//      type at a time.
+		// BPS: All but queen reflects fact that combination of rook and bishop are used to obviate need for
+		//      queen tests.
 		for (Piece_type pt : all_but_queen) {
 			p = search_path(pt, threatened_coord, threatening, true, need_path);
 			if (!p.empty()) {
@@ -310,8 +321,17 @@ struct Board {
 		Piece* to_move = board[c1.row][c1.col];
 		bool old_has_moved = to_move->has_moved;
 		if (to_move->type == Piece_type::King) {
+			// BPS: Parens around the assignments are not necessary in C++, but this construction might
+			//      cause even some experienced programmers to resort to the operator precedence page. Don't
+			//      know if that's a good or back thing. Another possibility:
+			//      *(Coordinate *)(to_move->team == Team::black ? &black_king : &white_king) = c2;
 			(to_move->team == Team::black) ? black_king = c2 : white_king = c2;
 		}
+		// BPS: Question: What is the rationale for the denormalization
+		//      inherent in strategy that has both the board and the
+		//      individual pieces maintain piece position? Not saying
+		//      there's not a good rationale, and perhaps it will become
+		//      clearer as I review further...
 		Piece* to_return = board[c2.row][c2.col];
 		board[c2.row][c2.col] = to_move;
 		to_move->position = c2;
