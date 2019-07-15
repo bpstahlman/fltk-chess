@@ -327,11 +327,9 @@ struct Board {
 			//      *(Coordinate *)(to_move->team == Team::black ? &black_king : &white_king) = c2;
 			(to_move->team == Team::black) ? black_king = c2 : white_king = c2;
 		}
-		// BPS: Question: What is the rationale for the denormalization
-		//      inherent in strategy that has both the board and the
-		//      individual pieces maintain piece position? Not saying
-		//      there's not a good rationale, and perhaps it will become
-		//      clearer as I review further...
+		// BPS: Question: What is the rationale for the denormalization inherent in strategy that has both the
+		// board and the individual piece's maintain piece position? Not saying there's not a good rationale,
+		// and perhaps it will become clearer as I review further...
 		Piece* to_return = board[c2.row][c2.col];
 		board[c2.row][c2.col] = to_move;
 		to_move->position = c2;
