@@ -15,7 +15,9 @@ string text(Team t, bool cap = true) {
 	return (t == Team::white ? (cap ? "White" : "white") : (cap ? "Black" : "black"));
 }
 
-// BPS: This method could use some comments.
+// BPS: I notice that all callers iterate over all (or nearly all) piece types; is there a reason the iteration over
+//      piece types isn't hidden within this function? I.e., is there a use case for calling search_path on a subset of
+//      types?
 Path Board::search_path(Path_type path_type, Coordinate search_from, Team mover_team, bool finding_threat, bool need_path) {
 	int count;
 	vector<Delta> vd{};
@@ -89,11 +91,17 @@ Path Board::search_path(Path_type path_type, Coordinate search_from, Team mover_
 						}
 					}
 				} else {
-					// BPS: Move is from perspective of player.
+					// BPS: Sense of sought move is the opposite of finding_threat scenario: i.e., sought move is *from* search_from.
 					if (piece && piece->team == mover_team) {
+						// BPS: Can't move into square occupied by own piece.
 						remove = true;
 					} else {
-						// BPS: See whether move to vr[idx] is valid.
+						// BPS: See whether move to vr[idx] is valid, and if so, return the move.
+						// BPS: Idea: One possibility for simplifying move/undo sequence would be to have Board maintain
+						//      an undo "stack": e.g., when you tell it to move a piece, it saves the old state somehow,
+						//      such that when you call undo, it can simply undo the last move. Just a thought... I
+						//      could see move/undo being a useful primitive, especially if you eventually add some AI:
+						//      might be nice to be able to hide the complexity a little better...
 						pair<Piece*, bool> move_return = move(search_from, vr[idx]);
 						Piece* moved_piece = get_at(vr[idx]);
 						bool result_valid_return = moved_piece->result_valid(false);
@@ -124,7 +132,8 @@ Path Board::search_path(Path_type path_type, Coordinate search_from, Team mover_
 }
 
 // BPS: In the absence of a compelling reason to do otherwise, I'd pass a
-//      collection like Path as const ref.
+//      collection like Path as const ref to avoid copy.
+// BPS: This method should be defined in chess_classes.h or chess_classes.cpp.
 bool Piece::path_valid(Path p) {
 	auto p_b = p.begin(); // BPS: UNUSED!
 	auto p_e = p.end();   // BPS: UNUSED!
@@ -150,10 +159,13 @@ bool Piece::path_valid(Path p) {
 	return true;
 }
 
+// BPS: This method should be defined in chess_classes.h or chess_classes.cpp.
 bool Piece::result_valid(bool modify_lane) {
 	bool ret = false;
 	// BPS: Get the piece in check lane adjacent to king.
 	Piece* first_piece = (B.check_lane.size() > 0 ? B.get_at(B.check_lane.front()) : nullptr);
+	// BPS: Upon entry to this function, check_lane still applies to move being validated; if the move is valid and
+	//      modify_lane is set, it will be changed to reflect *opponent* before return.
 	if (B.check_lane.empty()) {
 		// BPS: Player wasn't already in check, but is its king threatened now?
 		if (B.is_threatened(!team, B.get_king(team), false).empty()) {
@@ -163,7 +175,7 @@ bool Piece::result_valid(bool modify_lane) {
 		//      if king in check hasn't moved further into the check lane
 		//      && (any of player's other pieces *has* moved into check lane
 		//          || nothing in check lane square closest to king)
-		//             Question: What is the significance of this test?
+		//             Note: This test is wrong.
 		//      && king is not threatened
 	} else if ((not (B.check_lane.size() > 1 && first_piece && first_piece->type == Piece_type::King && first_piece->team == team))
 			   &&
@@ -171,25 +183,26 @@ bool Piece::result_valid(bool modify_lane) {
 			    ||
 			    B.get_at(B.check_lane.front()) == nullptr)
 		       &&
-			   // BPS: Question: Why doesn't this final test obviate need for
-			   //      the ones above?
+			   // BPS: Although this test would be sufficient on its own, the preceding (cheap) tests are tried first to
+			   //      allow the more expensive test to be short-circuited.
 		       B.is_threatened(!team, B.get_king(team), false).empty()) {
 		ret = true;
 	}
-	// BPS: Something a bit messy about the way check_lane is used here; wasn't
-	//      clear to me at first that the assignment here was for other piece
-	//      (next turn). Rather than assigning directly to a public member of
-	//      board, perhaps you could pass a flag to is_threatened that told it
-	//      whether it should cache the check_lane; in that case, some of the
-	//      huge else if above might be consolidated into Board itself, which
-	//      would then have all the information it needed to determine whether
-	//      the threat represented by check_lane was ended.
+	// BPS: Do check test for opponent and cache for next call to this function.
+	// BPS: Something a bit messy about the way check_lane is used here; wasn't clear to me at first that the assignment
+	//      here was for other piece (next turn). Rather than assigning directly to a public member of board, perhaps
+	//      you could pass a flag to is_threatened that told it whether it should cache the check_lane; in that case,
+	//      some of the huge else if above might be consolidated into Board itself, which would then have all the
+	//      information it needed to determine whether the threat represented by check_lane was ended.
+	//      On further reflection, I'm not convinced that check_lane isn't a premature optimization.
 	if (ret && modify_lane) {
 		B.check_lane = B.is_threatened(team, B.get_king(!team), true);
 	}
 	return ret;
 }
 
+// BPS: Such a special-purpose function should probably have a less generic name. Also, it should probably be
+// file-static to prevent namespace pollution.
 int extract(int idx, smatch sm) {
 	return stoi(sm[idx].str());
 }
@@ -218,6 +231,8 @@ retry:
 }
 
 int main() {
+	// BPS: Might want to consider encapsulating game state somehow, as opposed to maintaining "turn" etc as local
+	// variables in main().
 	Team turn = Team::white;
 	string user_input;
 	regex rx("\\(([0-7]),([0-7])\\) -> \\(([0-7]),([0-7])\\)");
@@ -241,7 +256,11 @@ int main() {
 		Piece* piece = B.get_at(from);
 		Piece* dest = B.get_at(to);
 		//cout << "from = (" << from.row << "," << from.col << ")\n";
+		// BPS: delta_valid() returns a valid path (else empty path) if move *geometry* is correct, ignoring any other
+		//      pieces currently occupying squares in path.
 		Path r_d_v = piece->delta_valid(to);
+		// BPS: If we have a valid piece, it's that piece's turn, and the requested move is not blocked by the occupants
+		//      (or lack thereof) of any squares in the path...
 		if (piece && piece->team == turn && !r_d_v.empty() && piece->path_valid(r_d_v)) {
 			// BPS: Consider having some sort of undo stack maintained by board, which would
 			//      obviate the need for passing around so many piece objects
@@ -265,12 +284,19 @@ int main() {
 			cout << " {" << el.row << "," << el.col << "}";
 		}
 		cout << " }\n";
+		// BPS: check_lane for the team we've just switched to was calculated and cached at the end of the
+		//      result_valid() call that validated the move that just completed.
 		if (B.check_lane.empty()) {
+			// BPS: Player isn't in check, but we still need to check for stalemate.
+			// BPS: Why is turn complemented here? Didn't the "turn = !turn" earlier already switch to the player for
+			//      whom we need to test stalemate?
 			if (B.stalemate_check(!turn)) {
 				cout << "You've reached a stalemate. No one wins (or loses).";
 				return 0;
 			}
 		} else {
+			// BPS: Player is in check; make sure it's not checkmate.
+			// BPS: See question at stalemate_check call above...
 			// BPS: Checkmate test obviates need for stalemate testing.
 			if (B.checkmate_check(!turn)) {
 				cout << "Checkmate. " << text(turn) << " wins.";

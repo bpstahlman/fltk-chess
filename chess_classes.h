@@ -30,6 +30,7 @@ struct Coordinate {
 	int row;
 	int col;
 	bool operator==(Coordinate coord) {
+		// BPS: Parens unnecessary with return.
 		return (row == coord.row && col == coord.col);
 	}
 	void operator+=(Coordinate coord) {
@@ -41,6 +42,7 @@ struct Coordinate {
 		col -= coord.col;
 	}
 	bool on_board() {
+		// BPS: Parens unnecessary with return.
 		return (row >= 0 && row <= 7 && col >= 0 && col <= 7);
 	}
 	vector<Coordinate> get_adjacents() {
@@ -98,6 +100,12 @@ vector<element> combine(const vector<element>& v1, const vector<element>& v2) {
 struct Piece {
 	Coordinate position;
 	Team team;
+	// BPS: Making these non-static members of Piece means every piece within a given type will get its own copy of
+	//      the vector, which isn't really necessary. If these vectors are necessary, perhaps references to class or
+	//      function-static vectors could be returned by a virtual get_barred_if_opp() or some such. An approach
+	//      like this would ensure that a single vector could be used for all pawns, both knights, etc. I realize
+	//      there aren't a lot of pieces, so the memory savings isn't all that significant, but there's also the
+	//      clutter/complexity required to ensure that the vectors get initialized within each instantiated piece.
 	const vector<Delta>* barred_if_opp;
 	const vector<Delta>* barred_if_not_opp;
 	bool has_moved = false;
@@ -115,10 +123,11 @@ struct Piece {
 		return Delta{abs(destination.row - position.row), abs(destination.col - position.col)};
 	}
 	Path path_to(Coordinate destination) {
-		// BPS: sgn() function (not in C++ std library) would simplify this.
+		// BPS: sgn() function (not in C++ std library) might simplify this.
+		//      Rationale: Component magnitude constrained to 0 and 1.
 		// BPS: Question: Is there an advantage to instantiating paths in this way?
-		// BPS: Question: Would it be simpler to have each piece type override this? I notice that each call
-		//      site has validation before the call to path_to.
+		// BPS: Question: Would it be simpler/cleaner to have each piece type override this? I notice not all
+		//      piece types use it, and even those that do have validation before the call to path_to.
 		int row_inc = ((destination.row - position.row) == 0 ? 0 : ((destination.row - position.row) / abs(destination.row - position.row)));
 		int col_inc = ((destination.col - position.col) == 0 ? 0 : ((destination.col - position.col) / abs(destination.col - position.col)));
 		Path path;
@@ -133,6 +142,10 @@ struct Piece {
 	bool path_valid(Path);
 	bool result_valid(bool);
 	virtual Path delta_valid(Delta move) = 0;
+	// BPS: Part of me wonders whether the current approach using the "barred if" structs might be more complex than
+	//      an approach that embeds a piece's move logic entirely within a virtual function that checks both the
+	//      geometry of the move and whether the target square's current occupant prevents the move. Under the
+	//      approach I'm envisioning, path_to() would probably be pure virtual. Not sure. Just thinking aloud...
 	Piece(Coordinate pos, Team tm, Piece_type t, const vector<Delta>* b_i_o = &others_barred_if_opp, const vector<Delta>* b_i_n_o = &others_barred_if_not_opp) 
 		:position{pos}, team{tm}, type{t}, barred_if_opp{b_i_o}, barred_if_not_opp{b_i_n_o} {}
 };
@@ -244,6 +257,11 @@ struct Board {
 		board[c2.row][c2.col] = saved_val;
 	}*/
 	void display() {
+		// BPS: Similar to later comment on nested vectors... I probably wouldn't bother with a map for
+		//      something like this. Keep in mind that Team and Piece_type values can be used as integers: thus,
+		//      a plain old const 2D C-style array like this...
+		//      { {" \u265F ", ...}, {" \u2659 ", ...} }
+		//      ...would work just as well with less clutter and less runtime overhead.
 		map<Team, map<Piece_type, string>> piece_strings {  { Team::black, {{Piece_type::Pawn, " \u2659 "},
 			                                                            {Piece_type::Knight, " \u2658 "},
 								                    {Piece_type::Bishop, " \u2657 "},
@@ -291,10 +309,14 @@ struct Board {
 	bool checkmate_check(Team threatened) {
 		Coordinate king = get_king(threatened);
 		if (none_of(check_lane.begin(), check_lane.end(), [&](Coordinate c) { return !is_threatened(threatened, c, false).empty(); })) {
+			// BPS: None of the squares in the check_lane can be taken by the team in check; thus, if escape
+			//      is possible, it will require king movement.
 			Piece* save = board[king.row][king.col];
 			board[king.row][king.col] = nullptr;
 			vector<Coordinate> adjacents = king.get_adjacents();
 			if (all_of(adjacents.begin(), adjacents.end(), [&](Coordinate c) { return !is_threatened(!threatened, c, false).empty(); })) {
+				// BPS: All of the squares adjacent to the king in check are threatened by opponent. No
+				//      way out...
 				board[king.row][king.col] = save;
 				return true;
 			}
@@ -302,11 +324,20 @@ struct Board {
 		}
 		return false;
 	}
+	// BPS: "threatened" seems to be a bit of a misnomer: "player" or "mover" might be a less confusing choice.
 	bool stalemate_check(Team threatened) {
 		for (int row = 0; row <= 7; ++row) {
 			for (int col = 0; col <= 7; ++col) {
 				Piece* piece = board[row][col];
 				if (piece && piece->team == threatened) {
+					// BPS: Found a piece belonging to player: see whether it has a valid move.
+					// BPS: Question: Is there a reason that is_threatened iterates over "all but"
+					//      queen while this one iterates over all?
+					// BPS: Question: Why loop over all piece types here when there's only one type
+					//      that applies? IIUC, when search_path's finding_threat arg is false, it's
+					//      looking for a valid move for the piece at [row,col], and the type of
+					//      that piece is known. Couldn't this loop could result in an invalid move
+					//      being found.
 					for (Piece_type pt : all_piece_types) {
 						if (!search_path(pt, Coordinate(row,col), threatened, false, false).empty()) {
 							return false;
@@ -328,8 +359,8 @@ struct Board {
 			(to_move->team == Team::black) ? black_king = c2 : white_king = c2;
 		}
 		// BPS: Question: What is the rationale for the denormalization inherent in strategy that has both the
-		// board and the individual piece's maintain piece position? Not saying there's not a good rationale,
-		// and perhaps it will become clearer as I review further...
+		//      board and the individual piece's maintain piece position? Not saying there's not a good
+		//      rationale, and perhaps it will become clearer as I review further...
 		Piece* to_return = board[c2.row][c2.col];
 		board[c2.row][c2.col] = to_move;
 		to_move->position = c2;
@@ -351,10 +382,16 @@ struct Board {
 	vector<Piece*>& operator[](int row) {
 		return board[row];
 	}
+	// BPS: I can't think of any advantage to ref-to-pointer over simple pointer.
 	Piece*& get_at(Coordinate c) {
 		return board[c.row][c.col];
 	}
 	Board() {
+		// BPS: Personally, I'd probably just use a plain C-style, const 2D array for something like this: e.g.,
+		//      { {Rook, Bishop, Knight, ...}, { Pawn, None, None, ...}, ... }
+		//      Rationale: 2D vectors are a bit more syntactically cluttered, and you don't really need the
+		//      dynamic growability provided by std::vector. In fact, if you used a const array only for filling
+		//      the board, the compiler might actually optimize it away...
 		vector<Piece_type> edge_row { Piece_type::Rook, Piece_type::Bishop, Piece_type::Knight, Piece_type::Queen, 
 			                      Piece_type::King, Piece_type::Knight, Piece_type::Bishop, Piece_type::Rook };
 		vector<vector<Piece_type>> order { edge_row,
